@@ -38,7 +38,7 @@ The Smart Email Responder uses advanced AI reasoning to:
 
 ## 🚀 Quick Start
 
-### Prerequisites
+## 🚀 Quick Start
 
 - Python 3.8 or higher
 - Gmail account
