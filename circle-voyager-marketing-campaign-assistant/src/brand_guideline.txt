@@ -1,0 +1,114 @@
+🏆 VOYAGER SHOES — FULL BRAND GUIDELINE FOR AI SOCIAL POST GENERATION
+
+1. BRAND ESSENCE
+Brand Name: Voyager Shoes
+Tagline: “Every step is an exploration.”
+Core Belief: Football isn’t just a game — it’s a journey of growth, discovery, and passion. Voyager represents movement, exploration, and self-discovery — both on and off the pitch.
+Brand Symbolism: Each player is a voyager — exploring the field, breaking limits, discovering new versions of themselves.
+
+2. VISUAL IDENTITY
+Colour Palette:
+- Voyager Blue: #0B1E40 (Primary background; confidence and depth)
+- Explorer Gold: #F5B500 (Accent for highlights and text emphasis)
+- Freedom White: #FFFFFF (Contrast background)
+- Journey Grey: #7C8BA1 (Secondary tone for text)
+- Pitch Green (optional): #3B7D3C (Football field tone)
+
+Visual Mood (AI Image Prompts):
+- Lighting: golden sunrise or sunset (symbolising the “journey”)
+- Composition: dynamic angles, movement blur, grounded realism
+- Textures: turf, dust, sweat, natural lighting
+- Focus Points: close-up of boots in motion, silhouettes running, horizon lines, low-angle field views
+
+3. TONE OF VOICE
+- Adventurous: Celebrate exploration, curiosity, and motion. Example: “Every pitch is a new map.”
+- Empowering: Encourage progress and self-belief. Example: “Faster. Freer. Further.”
+- Authentic: Raw, grounded, human. Example: “The mud, the sweat, the grind — that’s the story.”
+- Confident: Direct, bold, short statements. Example: “No limits. Just movement.”
+Keep text cinematic, emotional. Avoid sales or corporate tone.
+
+4. TYPOGRAPHY
+- Headline: Montserrat / Bebas Neue / Oswald (Bold, uppercase)
+- Body: Open Sans / Lato / Roboto (Clean, geometric sans-serif)
+- Accent / Tagline: Raleway Italic / Playfair Italic (Light, elegant)
+Visual tone: clean, minimal layouts with bold uppercase headers and open spacing.
+
+5. POST COMPOSITION
+Hero Line: 3–6 words, emotional and strong.
+Subtext: 1–2 short lines.
+Soft CTA: Motivational, not product pitch.
+Hashtags: 1 brand tag + 1 thematic tag.
+Image: Emotion-driven, showing motion and exploration.
+
+6. CORE HASHTAGS
+#VoyagerShoes #EveryStepIsAnExploration
+Additional tags: #FootballJourney #PlayBeyondLimits #BuiltForExplorers #NextStep #OwnThePitch #VoyagerFootball #GameChanger
+
+7. PLATFORM-SPECIFIC TEMPLATES
+
+INSTAGRAM
+Tone: Inspirational, cinematic, emotional
+Example Templates:
+1. “The journey begins. Voyager Shoes — built for explorers of the game.”
+   Hashtags: #VoyagerShoes #EveryStepIsAnExploration #FootballJourney
+   Image: cinematic close-up, sunrise tones.
+
+2. “Every pitch is a new world. Every game, a new story.”
+   Hashtags: #PlayBeyondLimits #VoyagerShoes
+   Image: silhouette running into horizon.
+
+3. “The field tests you. The journey defines you.”
+   Hashtags: #BuiltForExplorers #FootballJourney #VoyagerShoes
+
+4. “Beyond the 90 minutes. The explorer never stops.”
+   Hashtags: #EveryStepIsAnExploration #VoyagerFootball
+
+5. “Every voyager has a story. Tell us yours.”
+   Hashtags: #VoyagerCommunity #FootballJourney #VoyagerShoes
+
+LINKEDIN
+Tone: Inspirational + professional
+Examples:
+1. Voyager Shoes isn’t just a launch — it’s a movement. For players who treat football as a journey of discovery. Every step is an exploration.
+2. Designed for performance. Inspired by explorers. Voyager Shoes — crafted for progress.
+3. Football teaches leadership through exploration. Voyager — built for courage and purpose.
+
+TWITTER / X
+Tone: Short, bold, energetic
+Examples:
+1. Every step is an exploration. ⚡ #VoyagerShoes #FootballJourney
+2. Built for explorers of the game. 🌍 #VoyagerShoes #PlayBeyondLimits
+3. Freedom. Movement. Discovery. That’s Voyager. #BuiltForExplorers
+4. Football isn’t just a game — it’s your story. #VoyagerFootball #EveryStepIsAnExploration
+
+FACEBOOK
+Tone: Storytelling, community
+Examples:
+1. Every player has a journey. Some explore to find speed. Others, strength. Wherever you go — Voyager walks with you. #VoyagerShoes #EveryStepIsAnExploration
+2. What does your football journey look like? Share with #VoyagerFootball ⚽
+3. There’s no finish line for explorers. Just the next challenge. Keep moving. #PlayBeyondLimits #VoyagerShoes
+
+8. AI IMAGE KEYWORDS
+football, journey, exploration, field, running, sunrise, dust, cinematic, motion, discovery, bold, power, freedom, adventure, growth, determination, resilience, voyager, player silhouette, boots close-up, horizon, strength.
+
+9. AI INSTRUCTION SUMMARY
+Generate social media posts in Voyager Shoes brand style. Use bold, empowering, exploratory tone. Focus on football as a journey, not product pitch. Use Voyager Blue and Explorer Gold. Include one brand hashtag and one theme hashtag. Avoid “buy now” language. Aim for emotion, motion, and exploration.
+
+10. VISUAL STYLE REFERENCE BOARD
+Palette Overview:
+- 🟦 Voyager Blue #0B1E40 — primary base
+- 🟨 Explorer Gold #F5B500 — accent
+- ⬜ Freedom White #FFFFFF — contrast
+- 🌫️ Journey Grey #7C8BA1 — support
+- 🌿 Pitch Green #3B7D3C — optional
+
+Composition Guidelines:
+- Layout: minimalist, cinematic, balanced negative space
+- Focal Points: center or low-angle action, horizon or light source
+- Text placement: center or bottom-left, high contrast (white/gold on dark blue)
+- Image ratio: IG 1:1 / 4:5; LinkedIn/Facebook 16:9; X 3:2 or 16:9
+- Lighting: golden hour or strong contrast
+- Texture: turf, soil, light rays, motion blur
+
+Sample AI Layout Prompt:
+“Minimalist football action image in Voyager brand palette. Focus on movement and discovery. Deep blue and gold tones, cinematic lighting, hero quote area bottom-left.”
