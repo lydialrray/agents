@@ -1,0 +1,5 @@
+Brand Name: Voyager Shoes
+Tagline: "Every step is an exploration."
+Colours: #0B1E40, #F5B500, #FFFFFF, #7C8BA1, #3B7D3C
+Fonts: Montserrat, Bebas Neue, Oswald, Open Sans, Lato, Roboto, Raleway, Playfair
+Imagery: cinematic, sunrise, motion, horizon, turf, light, silhouette
