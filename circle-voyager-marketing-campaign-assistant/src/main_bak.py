@@ -20,12 +20,18 @@ Usage:
 # env: export OPENAI_API_KEY="sk-..."
 
 from typing import List, Dict
-from typing import List, Dict
 import re
 import json
 from typing import Dict, List, Optional
 import os
 from openai import OpenAI
+
+# ---------------- OpenAI API Key Configuration ----------------
+# ⚠️ NOTE: This is for local testing ONLY. Do not commit or share this file with the key inside.
+OPENAI_API_KEY = ""
+
+# Make sure the key is visible to the OpenAI client
+os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
 # ---------------- campaign_planner_agent (brand-agnostic) ----------------
 
@@ -170,13 +176,140 @@ def brand_consistency_agent(raw_brief: Dict, brand_guideline_path: str) -> Dict:
         }
     }
 
+# ---------- Helpers for post generation (OpenAI) ----------
+def _compose_prompt(channel: str, polished_campaign_brief: Dict) -> str:
+    pcb = polished_campaign_brief.get("polished_campaign_brief", {})
+    messaging = pcb.get("messaging", "")
+    tagline = pcb.get("tagline", "")
+    hooks = pcb.get("creative_hooks", []) or []
+    visuals = pcb.get("visuals", {})
+    tone = pcb.get("tone", [])
+    hashtags = pcb.get("hashtags", [])
+
+    # Channel-specific guidance
+    if channel == "instagram":
+        platform_rules = (
+            "Cinematic, inspiring caption (<= 150 words). Short lines, tasteful emojis OK. "
+            "Soft nudge, no hard sell. Hashtags: 3–6, relevant and on-brand."
+        )
+    elif channel == "x":
+        platform_rules = (
+            "High-impact concise post (<= 250 characters). One strong line + short kicker. "
+            "Emojis minimal. Hashtags: 1–3 only."
+        )
+    elif channel == "linkedin":
+        platform_rules = (
+            "Professional, inspirational caption (2–4 short paragraphs, <= 120 words). "
+            "Focus on craft, mindset, learning. Emojis rare/subtle. Hashtags: 2–4 thoughtful tags."
+        )
+    elif channel == "facebook":
+        platform_rules = (
+            "Warm, community-forward caption (1–3 short paragraphs, <= 100 words). "
+            "Invite comments or stories; no hard sell. Hashtags: 2–4 relevant."
+        )
+    else:
+        platform_rules = "Concise, on-brand caption with 2–4 relevant hashtags."
+
+    visual_guide = (
+        "Also provide one sentence 'Visual Idea' to brief an image generator using imagery/color cues. "
+        "No camera tech jargon."
+    )
+
+    return f"""
+You are a social copywriter creating a post for: {channel.upper()}.
+
+Inputs:
+- Messaging: {messaging}
+- Tagline: {tagline}
+- Creative Hooks: {", ".join(hooks[:5])}
+- Visuals: fonts={visuals.get("fonts","")}; colors={visuals.get("colors","")}; imagery={visuals.get("imagery","")}
+- Tone: {", ".join(tone) if tone else "adventurous, empowering, authentic, confident"}
+- Suggested Hashtags: {", ".join(hashtags[:8]) if hashtags else "(none provided)"}
+
+Rules:
+{platform_rules}
+{visual_guide}
+
+Task:
+Return JSON ONLY with:
+{{
+  "post_caption": "string",
+  "post_visual_idea": "string",
+  "hashtags": ["string", "string"]
+}}
+""".strip()
+
+def _call_openai_for_post(prompt: str, model: Optional[str] = None) -> Dict:
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    use_model = model or "gpt-4o-mini"
+
+    resp = client.chat.completions.create(
+        model=use_model,
+        messages=[
+            {"role": "system", "content": "You are a precise content generator. Output strict JSON only."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.7,
+        max_tokens=400,
+    )
+
+    content = resp.choices[0].message.content.strip()
+    try:
+        return json.loads(content)
+    except Exception:
+        # Fallback if the model returns non-JSON (keeps flow simple)
+        return {
+            "post_caption": content,
+            "post_visual_idea": "Cinematic action image showing movement and exploration in brand colors.",
+            "hashtags": [],
+        }
+
+def _build_output(channel: str, payload: Dict) -> Dict:
+    return {
+        "channel": channel,
+        "post_content": {
+            "post_caption": payload.get("post_caption", ""),
+            "post_visual_idea": payload.get("post_visual_idea", ""),
+            "hashtags": payload.get("hashtags", [])[:6],
+        },
+    }
+
 # ---------------- instagram_post_creator_agent ----------------
+def instagram_post_creator_agent(polished_campaign_brief: Dict, model: Optional[str] = None) -> Dict:
+    prompt = _compose_prompt("instagram", polished_campaign_brief)
+    payload = _call_openai_for_post(prompt, model=model)
+    # Ensure 3–6 hashtags
+    if len(payload.get("hashtags", [])) < 3:
+        payload["hashtags"] = (payload.get("hashtags") or []) + ["#FootballJourney", "#EveryStepIsAnExploration", "#VoyagerShoes"]
+    payload["hashtags"] = payload["hashtags"][:6]
+    return _build_output("instagram", payload)
+
 
 # ---------------- x_post_creator_agent ----------------
+def x_post_creator_agent(polished_campaign_brief: Dict, model: Optional[str] = None) -> Dict:
+    prompt = _compose_prompt("x", polished_campaign_brief)
+    payload = _call_openai_for_post(prompt, model=model)
+    # Max 3 hashtags for X
+    payload["hashtags"] = (payload.get("hashtags") or [])[:3]
+    return _build_output("x", payload)
+
 
 # ---------------- linkedin_post_creator_agent ----------------
+def linkedin_post_creator_agent(polished_campaign_brief: Dict, model: Optional[str] = None) -> Dict:
+    prompt = _compose_prompt("linkedin", polished_campaign_brief)
+    payload = _call_openai_for_post(prompt, model=model)
+    # Keep hashtags tidy (2–4)
+    payload["hashtags"] = (payload.get("hashtags") or [])[:4]
+    return _build_output("linkedin", payload)
+
 
 # ---------------- facebook_post_creator_agent ----------------
+def facebook_post_creator_agent(polished_campaign_brief: Dict, model: Optional[str] = None) -> Dict:
+    prompt = _compose_prompt("facebook", polished_campaign_brief)
+    payload = _call_openai_for_post(prompt, model=model)
+    # Keep hashtags tidy (2–4)
+    payload["hashtags"] = (payload.get("hashtags") or [])[:4]
+    return _build_output("facebook", payload)
 
 # --------------- Demo (runs only when this file is executed directly) ---------------
 if __name__ == "__main__":
@@ -206,6 +339,17 @@ if __name__ == "__main__":
                     "Imagery: cinematic, sunrise, motion, horizon, turf, light, silhouette\n")
 
     polished = brand_consistency_agent(raw, guideline_path)
+
+    print("\n--- Example Posts ---")
+    ig = instagram_post_creator_agent(polished)
+    tw = x_post_creator_agent(polished)
+    li = linkedin_post_creator_agent(polished)
+    fb = facebook_post_creator_agent(polished)
+
+    print(json.dumps(ig, indent=2, ensure_ascii=False))
+    print(json.dumps(tw, indent=2, ensure_ascii=False))
+    print(json.dumps(li, indent=2, ensure_ascii=False))
+    print(json.dumps(fb, indent=2, ensure_ascii=False))
 
     #print(json.dumps(raw, indent=2, ensure_ascii=False)) 
     #print("------------------------------")  
