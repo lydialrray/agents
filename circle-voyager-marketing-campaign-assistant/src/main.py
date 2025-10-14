@@ -1,212 +1,385 @@
 #!/usr/bin/env python3
 """
-Marketing Campaign Assistant
+Marketing Campaign Assistant (Ollama-powered)
 
-An AI agent that:
-1. Generate marketing campaign brief.
-2. Adjusts the brief with brand guidelines.
-3. Create Instagram posts based on the brief and brand guidelines.
-4. Create X (Twitter) posts based on the brief and brand guidelines.
-5. Create LinkedIn posts based on the brief and brand guidelines.
-6. Create Facebook posts based on the brief and brand guidelines.
+What this file provides:
+1) campaign_planner_agent(...) -> creates a simple campaign brief JSON
+   - fields: messaging, creative_hooks (3), personas (<=3)
+2) brand_consistency_agent(...) -> polishes that brief using brand guidelines
+   - reads optional text file for guidelines
+   - fields: messaging, creative_hooks (3), visuals {fonts, colors, imagery}, tagline
 
-Usage: 
-    python main.py                                      # Run the agent
-    python main.py --evaluate all                       # Run full evaluation
-    python main.py --evaluate accuracy,bias_detection   # Run specific evaluators
+How to run a quick demo:
+    python main.py
+
 """
 
-# Requirements: pip install openai
-# env: export OPENAI_API_KEY="sk-..."
-
-from typing import List, Dict
-from typing import List, Dict
-import re
 import json
-from typing import Dict, List, Optional
 import os
-from openai import OpenAI
+from typing import List, Dict, Any, Optional
 
-# ---------------- campaign_planner_agent (brand-agnostic) ----------------
+# --- Settings you can change without touching the rest of the code ---
+MODEL = os.getenv("OLLAMA_MODEL", "llama3.1")
+HOST  = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+# ---------------------------------------------------------------------
 
-def campaign_planner_agent(goal: str, audience: str, football_moment: str, draft_ideas: List[str]) -> Dict:
-   
-    """
-    Turn inputs into a minimal strategic campaign brief (brand-neutral).
+# Ensure we look for brand_guideline.txt in the SAME folder as this script
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BRAND_GUIDE_PATH_DEFAULT = os.path.join(SCRIPT_DIR, "brand_guideline.txt")
 
-    Input:
-        goal (str): campaign goal
-        audience (str): target audience
-        football_moment (str): football-related context or timing
-        draft_ideas (list[str]): list of creative idea drafts
-    Output:
-        dict: structured campaign brief
-    """
+# ========== Small, readable helpers ==================================
 
-    # Derive objective and KPI in the simplest way
-    g = (goal or "").lower()
-
-    if any(k in g for k in ["awareness", "reach", "launch"]):
-        objective = "Increase brand awareness and reach."
-        kpi = "Impressions, Reach, Video Views"
-    elif any(k in g for k in ["engagement", "community", "ugc"]):
-        objective = "Boost engagement and user participation."
-        kpi = "Engagement Rate, UGC Volume, Shares"
-    elif any(k in g for k in ["conversion", "sale", "purchase"]):
-        objective = "Drive conversions and sales."
-        kpi = "Conversion Rate, Sales Volume"
-    else:
-        objective = "Strengthen brand connection and affinity."
-        kpi = "Positive Sentiment, Brand Mentions"
-
-    # Basic messaging logic
-    messaging = (
-        f"Goal: {goal}. Audience: {audience}. Context: {football_moment}. "
-        f"Core Message: Football is more than a game — it’s a journey."
-    )
-
-    # Create quick hooks, personas, and channels
-    creative_hooks = draft_ideas[:3] if draft_ideas else [
-        "Show the journey.",
-        "Highlight passion.",
-        "Celebrate every step."
-    ]
-    
-    personas = [{
-        "name": "Football Enthusiast",
-        "description": "Active players and fans who see football as a path to growth and achievement."
-    }]
-
-    # Final structured brief
-    return {
-        "campaign_brief": {
-            "messaging": messaging,
-            "creative_hooks": creative_hooks,
-            "personas": personas,
-            "objective": objective,
-            "kpi": kpi
-        }
-    }
-
-# ---------------- brand_consistency_agent ----------------
-
-def brand_consistency_agent(raw_brief: Dict, brand_guideline_path: str) -> Dict:
-    """
-    Align a raw campaign brief with a brand guideline text file and return a polished brief containing ONLY the requested fields.
-    
-    Input:
-        raw_brief (dict): raw campaign brief from campaign_planner_agent
-        brand_guideline_path (str): path to brand guideline text file
-    Output:
-        dict: polished campaign brief with brand-aligned messaging, hooks, visuals, and tagline
-    """
-    
-    # Load guideline text (if not found, proceed with sensible defaults)
+def _read_text_file(path: str) -> str:
+    """Read a text file if it exists; otherwise return empty string."""
     try:
-        with open(brand_guideline_path, "r", encoding="utf-8") as f:
-            guide = f.read()
-    except FileNotFoundError:
-        guide = ""
+        if path and os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read().strip()
+    except Exception:
+        pass
+    return ""
 
-    # Extract brand cues (very lightweight parsing)
-    # Colors (HEX)
-    hex_colors = list(dict.fromkeys(re.findall(r"#(?:[0-9A-Fa-f]{3}){1,2}\b", guide)))
-    colors = ", ".join(hex_colors[:5]) if hex_colors else "#0B1E40, #F5B500, #FFFFFF"
+def _extract_json(text: str) -> Dict[str, Any]:
+    """
+    Safely parse JSON. If the model includes extra text,
+    grab the first {...} block and parse that.
+    """
+    try:
+        return json.loads(text)
+    except Exception:
+        start, end = text.find("{"), text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return json.loads(text[start : end + 1])
+        raise ValueError("Could not parse model output as JSON.")
 
-    # Fonts (common families)
-    font_families = ["Montserrat", "Bebas Neue", "Oswald", "Open Sans", "Lato", "Roboto", "Raleway", "Playfair", "Playfair Display"]
-    found_fonts = [fam for fam in font_families if re.search(rf"\b{re.escape(fam)}\b", guide, re.IGNORECASE)]
-    fonts = ", ".join(dict.fromkeys(found_fonts)) if found_fonts else "Bold Sans-Serif (headline), Clean Sans-Serif (body)"
+def _call_ollama(messages: List[Dict[str, str]]) -> Dict[str, Any]:
+    """
+    Calls Ollama. Tries the official client; falls back to plain HTTP.
+    """
+    # A) Try official client first
+    try:
+        from ollama import Client  # pip install ollama
+        client = Client(host=HOST)
+        resp = client.chat(model=MODEL, messages=messages, format="json")
+        content = resp.get("message", {}).get("content", resp)
+        return content if isinstance(content, dict) else _extract_json(content)
+    except Exception:
+        # B) Fallback to HTTP
+        import requests  # pip install requests
+        r = requests.post(
+            f"{HOST}/api/chat",
+            json={"model": MODEL, "messages": messages, "stream": False, "format": "json"},
+            timeout=180,
+        )
+        r.raise_for_status()
+        data = r.json()
+        content = data.get("message", {}).get("content", data)
+        return content if isinstance(content, dict) else _extract_json(content)
 
-    # Tagline
-    tagline = ""
-    m = re.search(r"Tagline:\s*[“\"']?(.+?)[”\"']?\s*(?:\n|$)", guide, re.IGNORECASE)
-    if m:
-        tagline = m.group(1).strip()
-    if not tagline:
-        # Fallback: look for a quoted journey/exploration line
-        m2 = re.search(r"[“\"'](.+?(exploration|journey).+?)[”\"']", guide, re.IGNORECASE)
-        if m2:
-            tagline = m2.group(1).strip()
 
-    # Imagery keywords
-    imagery_vocab = [
-        "cinematic", "sunrise", "sunset", "golden", "motion", "movement", "horizon",
-        "turf", "grass", "dust", "light", "silhouette", "close-up", "low-angle",
-        "grit", "authentic", "dynamic", "exploration", "journey"
+# ========== Agent 1: Campaign Planner (plain brief) ===================
+
+SYSTEM_PROMPT_PLANNER = """
+You are the Campaign Planner Agent for Voyager Shoes. 
+Your task is turn inputs (goal, audience, football_moment, draft_ideas) into a campaign brief.
+Return ONLY valid JSON (no markdown, no extra text) with this exact structure:
+{
+  "campaign_brief": {
+    "messaging": "string",
+    "creative_hooks": ["string", "string", "string"],
+    "personas": [{"name": "string", "description": "string"}]
+  }
+}
+
+Rules:
+- "messaging" should be between 100 and 200 characters.
+- "creative_hooks" must have exactly 3 items, which one is represent emotional, one represent aspirational, one represent fun/sporty.
+- "personas" up to 3 maximum; include motivations inside "description".
+"""
+
+def _build_planner_user_prompt(goal: str, audience: str, football_moment: str, draft_ideas: List[str]) -> str:
+    """
+    Turn the raw inputs into a clear prompt for the model.
+    """
+    ideas = draft_ideas or []
+    ideas_text = "\n".join(f"- {i}" for i in ideas) if ideas else "- (none provided)"
+
+    return f"""
+Inputs:
+- goal: {goal}
+- audience: {audience}
+- football_moment: {football_moment}
+- draft_ideas:
+{ideas_text}
+
+Return only the JSON object described above. No extra text.
+""".strip()
+
+def campaign_planner_agent(
+    goal: str,
+    audience: str,
+    football_moment: str,
+    draft_ideas: List[str],
+) -> Dict[str, Any]:
+    """
+    Build a simple campaign brief JSON.
+    """
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT_PLANNER},
+        {"role": "user",   "content": _build_planner_user_prompt(goal, audience, football_moment, draft_ideas)},
     ]
-    imagery_found = [w for w in imagery_vocab if re.search(rf"\b{w}\b", guide, re.IGNORECASE)]
-    imagery = ", ".join(imagery_found[:6]) if imagery_found else "cinematic, motion, horizon"
+    result = _call_ollama(messages)
 
-    # Raw inputs
-    cb = raw_brief.get("campaign_brief", {})
-    raw_msg = cb.get("messaging", "")
-    raw_hooks = cb.get("creative_hooks", []) or []
+    # Light validation (kept easy to read)
+    brief = result.get("campaign_brief", {})
+    if not isinstance(brief, dict):
+        raise ValueError("Missing 'campaign_brief' object.")
 
-    # Messaging (append tagline if not present)
-    messaging = raw_msg or "Football is a journey—show progress, grit, and milestone moments."
-    if tagline and tagline not in messaging:
-        messaging = f"{messaging} Tagline: {tagline}"
+    if "messaging" not in brief:
+        raise ValueError("Missing 'messaging' in campaign_brief.")
 
-    # Top 3 hooks, deduped
-    cleaned = []
-    for h in raw_hooks:
-        h_clean = re.sub(r"\s+", " ", str(h)).strip()
-        if h_clean and h_clean not in cleaned:
-            cleaned.append(h_clean)
-    creative_hooks = cleaned[:3] if cleaned else ["Show the journey.", "Highlight passion.", "Celebrate every step."]
+    hooks = brief.get("creative_hooks", [])
+    if not isinstance(hooks, list) or len(hooks) != 3:
+        raise ValueError("'creative_hooks' must be a list with exactly 3 items.")
 
-    # Build final polished brief (ONLY requested fields)
-    return {
-        "polished_campaign_brief": {
-            "messaging": messaging,
-            "creative_hooks": creative_hooks,
-            "visuals": {
-                "fonts": fonts,
-                "colors": colors,
-                "imagery": imagery
-            },
-            "tagline": tagline or ""
-        }
+    personas = brief.get("personas", [])
+    if not isinstance(personas, list):
+        raise ValueError("'personas' must be a list (up to 3 recommended).")
+
+    return result
+
+
+# ========== Agent 2: Brand Consistency (uses ONLY the file) ==========
+
+SYSTEM_PROMPT_BRAND = """
+You are the Brand Consistency Agent, acting as Voyager’s Brand Manager. Your goal is to review and refine campaign briefs so they align with Voyager’s brand voice and visual identity as written in the provided brand_guideline.txt.
+
+Return ONLY valid JSON (no markdown, no extra text) with this exact structure:
+{
+  "polished_campaign_brief": {
+    "messaging": "string",
+    "creative_hooks": ["string", "string", "string"],
+    "visuals": {"fonts": "string", "colors": "string", "imagery": "string"},
+    "tagline": "string"
+  }
+}
+
+Rules:
+- "messaging" should be between 100 and 200 characters.
+- "creative_hooks" must have exactly 3 items, which one is represent emotional, one represent aspirational, one represent fun/sporty.
+- "personas" up to 3 maximum; include motivations inside "description".
+- "tagline" should be short (3–6 words), memorable, and reflect the brand’s adventurous and empowering spirit.
+
+Instructions:
+- Use ONLY the provided brand guideline text (from the file in the same folder).
+- Align with the guideline's: tone of voice and storytelling themes.
+- Strengthen messaging and hooks to reflect the brand (adventurous, empowering, authentic, confident).
+- Suggest visual style guidance (magery, color palette with hex codes, typography families,
+  visual mood) drawn directly from the guideline.
+- Ensure a unified tagline and consistent storytelling across personas.
+- Keep hooks at exactly 3 items.
+"""
+
+def _build_brand_user_prompt(
+    draft_campaign_brief: Dict[str, Any],
+    guideline_text_from_file: str
+) -> str:
+    """
+    Combine the draft brief + the brand guideline text (from file)
+    into a simple prompt for the brand agent.
+    """
+    draft_json = json.dumps(draft_campaign_brief, ensure_ascii=False, indent=2)
+    file_text = guideline_text_from_file.strip() if guideline_text_from_file else "(file missing or empty)"
+
+    return f"""
+DRAFT CAMPAIGN BRIEF (JSON):
+{draft_json}
+
+BRAND GUIDELINE (from file in same folder):
+{file_text}
+
+Return only the JSON object described above. No extra text.
+""".strip()
+
+def brand_consistency_agent(
+    draft_campaign_brief: Dict[str, Any],
+    guideline_path: Optional[str] = BRAND_GUIDE_PATH_DEFAULT
+) -> Dict[str, Any]:
+    """
+    Produce a polished, on-brand version using ONLY the guideline file.
+    """
+    guideline_text = _read_text_file(guideline_path or "")
+    if not guideline_text:
+        raise ValueError(
+            f"Brand guideline file not found or empty at: {guideline_path}\n"
+            "Please create 'brand_guideline.txt' next to main.py."
+        )
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT_BRAND},
+        {"role": "user",   "content": _build_brand_user_prompt(draft_campaign_brief, guideline_text)},
+    ]
+    result = _call_ollama(messages)
+
+    # Light validation
+    polished = result.get("polished_campaign_brief", {})
+    if not isinstance(polished, dict):
+        raise ValueError("Missing 'polished_campaign_brief' object.")
+
+    if "messaging" not in polished:
+        raise ValueError("Missing 'messaging' in polished_campaign_brief.")
+
+    hooks = polished.get("creative_hooks", [])
+    if not isinstance(hooks, list) or len(hooks) != 3:
+        raise ValueError("'creative_hooks' must be a list with exactly 3 items.")
+
+    visuals = polished.get("visuals", {})
+    if not isinstance(visuals, dict) or not all(k in visuals for k in ["fonts", "colors", "imagery"]):
+        raise ValueError("Missing visuals details (fonts, colors, imagery).")
+
+    if "tagline" not in polished:
+        raise ValueError("Missing 'tagline' in polished_campaign_brief.")
+
+    return result
+
+
+# ========== Agent 3: Instagram Creator (IG-ready post) ===============
+
+SYSTEM_PROMPT_IG = """
+Role: You are the Instagram Creator Agent for Voyager Shoes.
+Goal: Turn a polished campaign brief + brand guideline into an Instagram-ready post.
+
+Return ONLY valid JSON (no markdown, no extra text) with this exact structure:
+{
+  "instagram_post": {
+    "caption": "string",
+    "image_prompt": "string"
+  }
+}
+
+Rules for CAPTION:
+- Instagram-ready and on-brand.
+- Structure:
+  1) Hero line: 3–6 words, emotional and strong (brand tone).
+  2) Subtext: 1–2 short lines that reflect the polished messaging + tagline.
+  3) Soft CTA: motivational (no salesy language).
+  4) Hashtags: exactly 2 at the end — 1 brand hashtag and 1 thematic hashtag from the guideline.
+- Keep lines short. Avoid corporate or “buy now” tone. Cinematic, empowering, exploratory.
+
+Rules for IMAGE_PROMPT:
+- One single prompt string (for an image generator).
+- Must reflect the Instagram caption and the brand guideline’s visual identity:
+  * Palette (Voyager Blue #0B1E40, Explorer Gold #F5B500, Freedom White #FFFFFF, Journey Grey #7C8BA1, optional Pitch Green #3B7D3C)
+  * Visual mood (golden hour lighting, movement, textures like turf/dust)
+  * Composition (dynamic/low-angle action, horizon lines, space for hero quote bottom-left)
+  * Textures and realism (motion blur, grounded feel)
+- Include the scene elements that match the caption (e.g., close-up of boots in motion).
+- Do NOT include camera brands; keep it general but vivid and actionable.
+
+Make sure the final JSON includes both fields: 'caption' and 'image_prompt'.
+"""
+
+def _build_instagram_user_prompt(
+    polished_campaign_brief: Dict[str, Any],
+    guideline_text_from_file: str
+) -> str:
+    """
+    Build a simple, self-contained prompt for the Instagram Creator Agent.
+    """
+    polished_json = json.dumps(polished_campaign_brief, ensure_ascii=False, indent=2)
+    file_text = guideline_text_from_file.strip() if guideline_text_from_file else "(file missing or empty)"
+
+    return f"""
+POLISHED CAMPAIGN BRIEF (JSON):
+{polished_json}
+
+BRAND GUIDELINE (from file in same folder):
+{file_text}
+
+Return only the JSON object described above. No extra text.
+""".strip()
+
+def instagram_creator_agent(
+    polished_campaign_brief: Dict[str, Any],
+    guideline_path: Optional[str] = BRAND_GUIDE_PATH_DEFAULT
+) -> Dict[str, Any]:
+    """
+    Create an Instagram-ready post using ONLY the guideline file + polished brief.
+    Output shape:
+    {
+      "instagram_post": {
+        "caption": "string",
+        "image_prompt": "string"
+      }
     }
+    """
+    guideline_text = _read_text_file(guideline_path or "")
+    if not guideline_text:
+        raise ValueError(
+            f"Brand guideline file not found or empty at: {guideline_path}\n"
+            "Please create 'brand_guideline.txt' next to main.py."
+        )
 
-# ---------------- instagram_post_creator_agent ----------------
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT_IG},
+        {"role": "user",   "content": _build_instagram_user_prompt(polished_campaign_brief, guideline_text)},
+    ]
+    result = _call_ollama(messages)
 
-# ---------------- x_post_creator_agent ----------------
+    # Light validation
+    ig = result.get("instagram_post", {})
+    if not isinstance(ig, dict):
+        raise ValueError("Missing 'instagram_post' object.")
+    if "caption" not in ig or not isinstance(ig["caption"], str) or not ig["caption"].strip():
+        raise ValueError("Missing or empty 'caption' in instagram_post.")
+    if "image_prompt" not in ig or not isinstance(ig["image_prompt"], str) or not ig["image_prompt"].strip():
+        raise ValueError("Missing or empty 'image_prompt' in instagram_post.")
 
-# ---------------- linkedin_post_creator_agent ----------------
+    # Optional: ensure exactly 2 hashtags in the last line (best-effort check)
+    # This keeps things beginner-friendly and not too strict.
+    # You can remove this block if it’s too opinionated.
+    caption_lines = [ln.strip() for ln in ig["caption"].splitlines() if ln.strip()]
+    if caption_lines:
+        last_line = caption_lines[-1]
+        hashtags = [tok for tok in last_line.split() if tok.startswith("#")]
+        if len(hashtags) != 2:
+            # Not fatal—just a gentle nudge by appending correct brand + thematic pair.
+            # If your guideline uses different tags, update them in brand_guideline.txt.
+            if "#VoyagerShoes" not in last_line or "#EveryStepIsAnExploration" not in last_line:
+                ig["caption"] = ig["caption"].rstrip() + "\n#VoyagerShoes #EveryStepIsAnExploration"
 
-# ---------------- facebook_post_creator_agent ----------------
+    return result
 
-# --------------- Demo (runs only when this file is executed directly) ---------------
+
+# ========== Quick demo (runs if you execute `python main.py`) =========
+
 if __name__ == "__main__":
-    raw = campaign_planner_agent(
-        goal="Drive awareness for the new football boot launch",
-        audience="Young football players aged 16-25",
-        football_moment="Start of the league season",
+    # 1) Generate a draft brief
+    draft = campaign_planner_agent(
+        goal="Grow email signups ahead of the derby weekend.",
+        audience="Urban 18–34 sneaker fans who watch Premier League highlights on mobile.",
+        football_moment="Derby weekend buildup (Fri–Sun) and matchday rituals.",
         draft_ideas=[
-            "Launch teaser video of players preparing for kickoff.",
-            "Fan challenge: show your 'first step' moment.",
-            "Behind-the-scenes with team captains."
-        ]
+            "UGC challenge: 'matchday steps' to the stadium",
+            "Limited-time colorway inspired by home/away kits",
+            "Fan podcast mini-segment about pre-match routines",
+        ],
     )
+    print("\n=== Draft Campaign Brief ===")
+    print(json.dumps(draft, indent=2, ensure_ascii=False))
 
-    # Replace with your actual guideline path
-    guideline_path = "brand_guideline.txt"
-    try:
-        with open(guideline_path, "r", encoding="utf-8") as _:
-            pass
-    except FileNotFoundError:
-        # Minimal fallback file
-        with open(guideline_path, "w", encoding="utf-8") as f:
-            f.write("Brand Name: Voyager Shoes\n"
-                    "Tagline: \"Every step is an exploration.\"\n"
-                    "Colours: #0B1E40, #F5B500, #FFFFFF, #7C8BA1, #3B7D3C\n"
-                    "Fonts: Montserrat, Bebas Neue, Oswald, Open Sans, Lato, Roboto, Raleway, Playfair\n"
-                    "Imagery: cinematic, sunrise, motion, horizon, turf, light, silhouette\n")
-
-    polished = brand_consistency_agent(raw, guideline_path)
-
-    #print(json.dumps(raw, indent=2, ensure_ascii=False)) 
-    #print("------------------------------")  
+    # 2) Polish the draft using ONLY ./brand_guideline.txt
+    polished = brand_consistency_agent(
+        draft_campaign_brief=draft,
+        guideline_path=BRAND_GUIDE_PATH_DEFAULT,  # ./brand_guideline.txt (same folder)
+    )
+    print("\n=== Polished Campaign Brief (On-Brand) ===")
     print(json.dumps(polished, indent=2, ensure_ascii=False))
+
+    # 3) Create an Instagram-ready post from the polished brief + guideline
+    instagram = instagram_creator_agent(
+        polished_campaign_brief=polished,
+        guideline_path=BRAND_GUIDE_PATH_DEFAULT,
+    )
+    print("\n=== Instagram Post (Caption + Image Prompt) ===")
+    print(json.dumps(instagram, indent=2, ensure_ascii=False))
