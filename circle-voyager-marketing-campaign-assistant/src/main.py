@@ -1,385 +1,444 @@
-#!/usr/bin/env python3
+import json, os, requests
+from datetime import datetime
+import time
+
+# ---------- BASIC CONFIG ----------
+USE_OLLAMA = True
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "phi3:mini")
+TOKENS = {"input": 0, "output": 0}
+
+# use host-only; the helper will pick the endpoint
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+CHAT_URL = f"{OLLAMA_HOST}/api/chat"
+GEN_URL  = f"{OLLAMA_HOST}/api/generate"
+
+# ---------- PROMPTS (one string each) ----------
+# PROMPT_AUDIENCE_PROFILER = """You are an audience profiler.
+# Return ONLY valid JSON with:
+# key_insight, desired_emotions[], voice_tone, literacy_level, taboo_list[]."""
+
+# PROMPT_CAMPAIGN_PLANNER = """You are a campaign planner for Instagram.
+# Return ONLY:
+# comms_objective, single_minded_proposition, reasons_to_believe[], CTA, success_signal."""
+
+# PROMPT_CAPTION_GENERATOR = """You are an Instagram caption writer.
+# Write 3–5 captions based on the plan and trends.
+# Rules: hook<125, total<2200, soft CTA, exactly 2 hashtags (1 brand + 1 theme), no salesy language.
+# Return ONLY JSON with captions[]: id, hook, body, CTA, hashtags[2], est_chars, used_trends."""
+
+# PROMPT_IMAGE_PROMPT_ENGINEER = """You are an AI image prompt engineer.
+# Make ONE cinematic prompt + negatives + short alt_text + metadata ratio.
+# Return ONLY JSON with: image_prompt, negative_prompts[], alt_text, metadata{ratio}."""
+
+PROMPT_AUDIENCE_PROFILER = """You are an audience profiler.
+READ the JSON immediately after the line 'Audience:'.
+Write ONLY a JSON object with the following keys:
+- key_insight: 1 sentence, plain language.
+- desired_emotions: array of 2–4 lowercase words.
+- voice_tone: short, comma-separated style (≤6 words), e.g., "adventurous, empowering, authentic".
+- literacy_level: one of ["general","youth","expert","casual"] (pick best fit).
+- taboo_list: array of 3–6 short phrases to avoid (lowercase, no punctuation).
+
+Rules:
+- UK spelling.
+- No marketing puffery.
+- No extra keys, no comments, no markdown, no prose outside JSON.
 """
-Marketing Campaign Assistant (Ollama-powered)
 
-What this file provides:
-1) campaign_planner_agent(...) -> creates a simple campaign brief JSON
-   - fields: messaging, creative_hooks (3), personas (<=3)
-2) brand_consistency_agent(...) -> polishes that brief using brand guidelines
-   - reads optional text file for guidelines
-   - fields: messaging, creative_hooks (3), visuals {fonts, colors, imagery}, tagline
+PROMPT_CAMPAIGN_PLANNER = """You are a campaign planner for Instagram.
+Input sections appear after 'Draft:' and 'Audience voice:'.
+Write ONLY a JSON object with:
+- comms_objective: 1 sentence outcome (not a tactic).
+- single_minded_proposition: ≤10 words, memorable, brand-ownable.
+- reasons_to_believe: array of 2–4 short, concrete reasons (no fluff).
+- CTA: soft, motivational (no salesy verbs, no 'buy', no prices).
+- success_signal: one measurable signal, e.g., "Saves rate ≥ 1.5%" or "Shares per 1k impressions ≥ 25".
 
-How to run a quick demo:
-    python main.py
-
+Constraints:
+- Align tone with Audience voice.
+- Avoid absolute claims, avoid endorsements.
+- UK spelling. No extra keys or text outside JSON.
 """
 
-import json
-import os
-from typing import List, Dict, Any, Optional
+PROMPT_CAPTION_GENERATOR = """You are an Instagram caption writer.
+You will receive three blocks: Plan:, Trends:, IG Rules: (JSON).
+Return ONLY a JSON object:
+{
+  "captions": [
+    {
+      "id": "cap_1..n",
+      "hook": "≤125 chars, punchy, cinematic",
+      "body": "1–2 short lines, emotive, no salesy language",
+      "CTA": "soft action line consistent with plan",
+      "hashtags": ["#BrandRequired","#OneThemeOnly"],
+      "est_chars": 0,
+      "used_trends": true
+    }
+  ]
+}
 
-# --- Settings you can change without touching the rest of the code ---
-MODEL = os.getenv("OLLAMA_MODEL", "llama3.1")
-HOST  = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-# ---------------------------------------------------------------------
+STRICT rules:
+- Produce 3–5 captions.
+- Total caption length (hook + body + CTA + hashtags) < 2200 chars.
+- Exactly 2 hashtags:
+  • First MUST be IG Rules.hashtag_policy.required_brand[0]
+  • Second MUST be one item from IG Rules.hashtag_policy.theme_pool
+- Tone: adventurous, empowering, authentic; UK spelling.
+- 0–2 emojis max; never in hashtags.
+- No quotes, no markdown, no extra keys, no explanations.
 
-# Ensure we look for brand_guideline.txt in the SAME folder as this script
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-BRAND_GUIDE_PATH_DEFAULT = os.path.join(SCRIPT_DIR, "brand_guideline.txt")
+Implementation hint (follow, do not print):
+- Read required_brand[0] and theme_pool from IG Rules JSON.
+"""
 
-# ========== Small, readable helpers ==================================
+PROMPT_IMAGE_PROMPT_ENGINEER = """You are an AI image prompt engineer for a football brand with a deep-blue & gold palette.
+You will receive Inputs: JSON with adjusted_plan, caption, palette, negatives, ratio.
+Return ONLY a JSON object with:
+- image_prompt: one compact, cinematic prompt for a photoreal image generator. Include:
+  • subject: football boots in motion / low-angle action
+  • mood: golden hour, explorer journey
+  • composition: dynamic, horizon/low angle, motion blur, shallow depth of field
+  • palette: use provided hexes (blue/gold) as accents or grading
+  • textures: turf, dust, sweat, natural light
+- negative_prompts: merge Inputs.negatives and add: ["logos","brand marks","league badges","faces","text overlays","watermarks","celebrity likeness"]
+- alt_text: 1 sentence, literal description, no marketing.
+- metadata: { "ratio": same string as Inputs.ratio }
 
-def _read_text_file(path: str) -> str:
-    """Read a text file if it exists; otherwise return empty string."""
-    try:
-        if path and os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                return f.read().strip()
-    except Exception:
-        pass
-    return ""
+Constraints:
+- No brand names, no player likeness, no tournament logos, no text-in-image.
+- Keep it under 60 words for image_prompt.
+- UK spelling, no extra keys or prose outside JSON.
+"""
 
-def _extract_json(text: str) -> Dict[str, Any]:
-    """
-    Safely parse JSON. If the model includes extra text,
-    grab the first {...} block and parse that.
-    """
-    try:
-        return json.loads(text)
-    except Exception:
-        start, end = text.find("{"), text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            return json.loads(text[start : end + 1])
-        raise ValueError("Could not parse model output as JSON.")
+# ---------- Interact with Ollama ----------
+def ask_ollama(model, prompt, *, mode="json", schema=None, temperature=0.4):
+    import requests, json
 
-def _call_ollama(messages: List[Dict[str, str]]) -> Dict[str, Any]:
-    """
-    Calls Ollama. Tries the official client; falls back to plain HTTP.
-    """
-    # A) Try official client first
-    try:
-        from ollama import Client  # pip install ollama
-        client = Client(host=HOST)
-        resp = client.chat(model=MODEL, messages=messages, format="json")
-        content = resp.get("message", {}).get("content", resp)
-        return content if isinstance(content, dict) else _extract_json(content)
-    except Exception:
-        # B) Fallback to HTTP
-        import requests  # pip install requests
-        r = requests.post(
-            f"{HOST}/api/chat",
-            json={"model": MODEL, "messages": messages, "stream": False, "format": "json"},
-            timeout=180,
-        )
+    def call_chat():
+        body = {
+            "model": model,
+            "messages": [{
+                "role": "user",
+                "content": prompt + (
+                    f"\n\nReturn ONLY valid JSON matching:\n{schema}" if (mode=="json" and schema) else ""
+                )
+            }],
+            "options": {"temperature": temperature},
+            "stream": False  # <<< SINGLE JSON, fixes 'Extra data'
+        }
+        if mode == "json":
+            body["format"] = "json"
+        r = requests.post(CHAT_URL, json=body, timeout=120)
         r.raise_for_status()
         data = r.json()
-        content = data.get("message", {}).get("content", data)
-        return content if isinstance(content, dict) else _extract_json(content)
+        TOKENS["input"]  += data.get("prompt_eval_count", 0)
+        TOKENS["output"] += data.get("eval_count", 0)
+        return data.get("message", {}).get("content", "")
 
+    def call_generate():
+        body = {
+            "model": model,
+            "prompt": prompt + (
+                f"\n\nReturn ONLY valid JSON matching:\n{schema}" if (mode=="json" and schema) else ""
+            ),
+            "options": {"temperature": temperature},
+            "stream": False  # <<< SINGLE JSON
+        }
+        # You can also set body["format"]="json" here, but plain prompt + schema hint is usually enough for phi3:mini
+        r = requests.post(GEN_URL, json=body, timeout=120)
+        r.raise_for_status()
+        data = r.json()
+        TOKENS["input"]  += data.get("prompt_eval_count", 0)
+        TOKENS["output"] += data.get("eval_count", 0)
+        return data.get("response", "")
 
-# ========== Agent 1: Campaign Planner (plain brief) ===================
+    # Prefer chat; on 404/405 or network issues, fall back to generate
+    try:
+        out = call_chat()
+    except requests.HTTPError as e:
+        if e.response is not None and e.response.status_code in (404, 405):
+            out = call_generate()
+        else:
+            raise
+    except requests.RequestException:
+        out = call_generate()
 
-SYSTEM_PROMPT_PLANNER = """
-You are the Campaign Planner Agent for Voyager Shoes. 
-Your task is turn inputs (goal, audience, football_moment, draft_ideas) into a campaign brief.
-Return ONLY valid JSON (no markdown, no extra text) with this exact structure:
-{
-  "campaign_brief": {
-    "messaging": "string",
-    "creative_hooks": ["string", "string", "string"],
-    "personas": [{"name": "string", "description": "string"}]
-  }
-}
+    if mode == "text":
+        return out
 
-Rules:
-- "messaging" should be between 100 and 200 characters.
-- "creative_hooks" must have exactly 3 items, which one is represent emotional, one represent aspirational, one represent fun/sporty.
-- "personas" up to 3 maximum; include motivations inside "description".
-"""
+    # JSON mode: parse; if model added extra text, try a stricter second pass via /generate
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError:
+        repaired = call_generate()
+        return json.loads(repaired)
 
-def _build_planner_user_prompt(goal: str, audience: str, football_moment: str, draft_ideas: List[str]) -> str:
-    """
-    Turn the raw inputs into a clear prompt for the model.
-    """
-    ideas = draft_ideas or []
-    ideas_text = "\n".join(f"- {i}" for i in ideas) if ideas else "- (none provided)"
+# ---------- Time logging ----------
 
-    return f"""
-Inputs:
-- goal: {goal}
-- audience: {audience}
-- football_moment: {football_moment}
-- draft_ideas:
-{ideas_text}
+def time_step(label, fn, *args, **kwargs):
+    from datetime import datetime; import time
+    bi, bo = TOKENS["input"], TOKENS["output"]
+    s = datetime.now().isoformat(timespec="seconds"); t = time.perf_counter()
+    print(f"▶ {label} START {s}")
+    out = fn(*args, **kwargs)
+    e = datetime.now().isoformat(timespec="seconds"); d = time.perf_counter() - t
+    di, do = TOKENS["input"]-bi, TOKENS["output"]-bo
+    print(f"✓ {label} END   {e}  ({d:.2f}s)  tokens in/out: {di}/{do}")
+    return out
 
-Return only the JSON object described above. No extra text.
-""".strip()
+# ---------- Simple web "tool" for trends ----------
+def trend_scraper_tool(topic: str, month: str, locale: str) -> dict:
+    # super simple RSS/title scraper → keywords
+    import re, collections
+    cc = (locale.split("-")[-1] or "GB").upper()
+    ll = (locale.split("-")[0] or "en").lower()
 
-def campaign_planner_agent(
-    goal: str,
-    audience: str,
-    football_moment: str,
-    draft_ideas: List[str],
-) -> Dict[str, Any]:
-    """
-    Build a simple campaign brief JSON.
-    """
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT_PLANNER},
-        {"role": "user",   "content": _build_planner_user_prompt(goal, audience, football_moment, draft_ideas)},
+    feeds = [
+        f"https://news.google.com/rss/search?q={requests.utils.quote(topic + ' ' + month)}&hl={ll}-{cc}&gl={cc}&ceid={cc}:{ll}",
+        "https://feeds.bbci.co.uk/sport/football/rss.xml",
+        "https://www.theguardian.com/football/rss",
     ]
-    result = _call_ollama(messages)
 
-    # Light validation (kept easy to read)
-    brief = result.get("campaign_brief", {})
-    if not isinstance(brief, dict):
-        raise ValueError("Missing 'campaign_brief' object.")
+    titles = []
+    for url in feeds:
+        try:
+            r = requests.get(url, timeout=8, headers={"User-Agent":"Mozilla/5.0"})
+            if r.ok:
+                titles += re.findall(r"<title>(.*?)</title>", r.text, flags=re.I)
+        except Exception:
+            pass
 
-    if "messaging" not in brief:
-        raise ValueError("Missing 'messaging' in campaign_brief.")
+    # clean + dedupe
+    titles = [t for t in titles if len(t.split()) > 3]
+    titles = list(dict.fromkeys(titles))[:50]
 
-    hooks = brief.get("creative_hooks", [])
-    if not isinstance(hooks, list) or len(hooks) != 3:
-        raise ValueError("'creative_hooks' must be a list with exactly 3 items.")
+    text = " ".join(titles).lower()
+    words = re.findall(r"[a-z]{3,}", text)
+    stop = set("""
+        the and for with from this that into your have has are was were will they them you our their who why what when
+        sport sports football soccer match game games live latest update updates vs cup league premier fa uefa
+    """.split())
+    words = [w for w in words if w not in stop]
 
-    personas = brief.get("personas", [])
-    if not isinstance(personas, list):
-        raise ValueError("'personas' must be a list (up to 3 recommended).")
+    hot = [w for w,_ in collections.Counter(words).most_common(10)]
+    summary  = ", ".join(hot[:5]) if hot else "no strong signals"
+    angles   = [f"{w} — pre-match ritual" for w in hot[:3]] or ["golden-hour match prep"]
+    snippets = titles[:3]
 
-    return result
-
-
-# ========== Agent 2: Brand Consistency (uses ONLY the file) ==========
-
-SYSTEM_PROMPT_BRAND = """
-You are the Brand Consistency Agent, acting as Voyager’s Brand Manager. Your goal is to review and refine campaign briefs so they align with Voyager’s brand voice and visual identity as written in the provided brand_guideline.txt.
-
-Return ONLY valid JSON (no markdown, no extra text) with this exact structure:
-{
-  "polished_campaign_brief": {
-    "messaging": "string",
-    "creative_hooks": ["string", "string", "string"],
-    "visuals": {"fonts": "string", "colors": "string", "imagery": "string"},
-    "tagline": "string"
-  }
-}
-
-Rules:
-- "messaging" should be between 100 and 200 characters.
-- "creative_hooks" must have exactly 3 items, which one is represent emotional, one represent aspirational, one represent fun/sporty.
-- "personas" up to 3 maximum; include motivations inside "description".
-- "tagline" should be short (3–6 words), memorable, and reflect the brand’s adventurous and empowering spirit.
-
-Instructions:
-- Use ONLY the provided brand guideline text (from the file in the same folder).
-- Align with the guideline's: tone of voice and storytelling themes.
-- Strengthen messaging and hooks to reflect the brand (adventurous, empowering, authentic, confident).
-- Suggest visual style guidance (magery, color palette with hex codes, typography families,
-  visual mood) drawn directly from the guideline.
-- Ensure a unified tagline and consistent storytelling across personas.
-- Keep hooks at exactly 3 items.
-"""
-
-def _build_brand_user_prompt(
-    draft_campaign_brief: Dict[str, Any],
-    guideline_text_from_file: str
-) -> str:
-    """
-    Combine the draft brief + the brand guideline text (from file)
-    into a simple prompt for the brand agent.
-    """
-    draft_json = json.dumps(draft_campaign_brief, ensure_ascii=False, indent=2)
-    file_text = guideline_text_from_file.strip() if guideline_text_from_file else "(file missing or empty)"
-
-    return f"""
-DRAFT CAMPAIGN BRIEF (JSON):
-{draft_json}
-
-BRAND GUIDELINE (from file in same folder):
-{file_text}
-
-Return only the JSON object described above. No extra text.
-""".strip()
-
-def brand_consistency_agent(
-    draft_campaign_brief: Dict[str, Any],
-    guideline_path: Optional[str] = BRAND_GUIDE_PATH_DEFAULT
-) -> Dict[str, Any]:
-    """
-    Produce a polished, on-brand version using ONLY the guideline file.
-    """
-    guideline_text = _read_text_file(guideline_path or "")
-    if not guideline_text:
-        raise ValueError(
-            f"Brand guideline file not found or empty at: {guideline_path}\n"
-            "Please create 'brand_guideline.txt' next to main.py."
-        )
-
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT_BRAND},
-        {"role": "user",   "content": _build_brand_user_prompt(draft_campaign_brief, guideline_text)},
-    ]
-    result = _call_ollama(messages)
-
-    # Light validation
-    polished = result.get("polished_campaign_brief", {})
-    if not isinstance(polished, dict):
-        raise ValueError("Missing 'polished_campaign_brief' object.")
-
-    if "messaging" not in polished:
-        raise ValueError("Missing 'messaging' in polished_campaign_brief.")
-
-    hooks = polished.get("creative_hooks", [])
-    if not isinstance(hooks, list) or len(hooks) != 3:
-        raise ValueError("'creative_hooks' must be a list with exactly 3 items.")
-
-    visuals = polished.get("visuals", {})
-    if not isinstance(visuals, dict) or not all(k in visuals for k in ["fonts", "colors", "imagery"]):
-        raise ValueError("Missing visuals details (fonts, colors, imagery).")
-
-    if "tagline" not in polished:
-        raise ValueError("Missing 'tagline' in polished_campaign_brief.")
-
-    return result
-
-
-# ========== Agent 3: Instagram Creator (IG-ready post) ===============
-
-SYSTEM_PROMPT_IG = """
-Role: You are the Instagram Creator Agent for Voyager Shoes.
-Goal: Turn a polished campaign brief + brand guideline into an Instagram-ready post.
-
-Return ONLY valid JSON (no markdown, no extra text) with this exact structure:
-{
-  "instagram_post": {
-    "caption": "string",
-    "image_prompt": "string"
-  }
-}
-
-Rules for CAPTION:
-- Instagram-ready and on-brand.
-- Structure:
-  1) Hero line: 3–6 words, emotional and strong (brand tone).
-  2) Subtext: 1–2 short lines that reflect the polished messaging + tagline.
-  3) Soft CTA: motivational (no salesy language).
-  4) Hashtags: exactly 2 at the end — 1 brand hashtag and 1 thematic hashtag from the guideline.
-- Keep lines short. Avoid corporate or “buy now” tone. Cinematic, empowering, exploratory.
-
-Rules for IMAGE_PROMPT:
-- One single prompt string (for an image generator).
-- Must reflect the Instagram caption and the brand guideline’s visual identity:
-  * Palette (Voyager Blue #0B1E40, Explorer Gold #F5B500, Freedom White #FFFFFF, Journey Grey #7C8BA1, optional Pitch Green #3B7D3C)
-  * Visual mood (golden hour lighting, movement, textures like turf/dust)
-  * Composition (dynamic/low-angle action, horizon lines, space for hero quote bottom-left)
-  * Textures and realism (motion blur, grounded feel)
-- Include the scene elements that match the caption (e.g., close-up of boots in motion).
-- Do NOT include camera brands; keep it general but vivid and actionable.
-
-Make sure the final JSON includes both fields: 'caption' and 'image_prompt'.
-"""
-
-def _build_instagram_user_prompt(
-    polished_campaign_brief: Dict[str, Any],
-    guideline_text_from_file: str
-) -> str:
-    """
-    Build a simple, self-contained prompt for the Instagram Creator Agent.
-    """
-    polished_json = json.dumps(polished_campaign_brief, ensure_ascii=False, indent=2)
-    file_text = guideline_text_from_file.strip() if guideline_text_from_file else "(file missing or empty)"
-
-    return f"""
-POLISHED CAMPAIGN BRIEF (JSON):
-{polished_json}
-
-BRAND GUIDELINE (from file in same folder):
-{file_text}
-
-Return only the JSON object described above. No extra text.
-""".strip()
-
-def instagram_creator_agent(
-    polished_campaign_brief: Dict[str, Any],
-    guideline_path: Optional[str] = BRAND_GUIDE_PATH_DEFAULT
-) -> Dict[str, Any]:
-    """
-    Create an Instagram-ready post using ONLY the guideline file + polished brief.
-    Output shape:
-    {
-      "instagram_post": {
-        "caption": "string",
-        "image_prompt": "string"
-      }
+    return {
+        "trend_summary": summary,
+        "hot_keywords": hot,
+        "example_angles": angles,
+        "fact_snippets": snippets,
+        "data_confidence": "medium" if len(titles) >= 10 else "low",
+        "source": "web" 
     }
-    """
-    guideline_text = _read_text_file(guideline_path or "")
-    if not guideline_text:
-        raise ValueError(
-            f"Brand guideline file not found or empty at: {guideline_path}\n"
-            "Please create 'brand_guideline.txt' next to main.py."
-        )
 
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT_IG},
-        {"role": "user",   "content": _build_instagram_user_prompt(polished_campaign_brief, guideline_text)},
-    ]
-    result = _call_ollama(messages)
+# ---------- BRAND (based on brand_guidelin.json) ----------
+def load_brand_guidelines(path="brand_guidelines.json"):
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f: return json.load(f)
+    return {
+      "brand_name":"Voyager Shoes",
+      "locale":"en-GB",
+      "tone":["adventurous","empowering","authentic","confident"],
+      "visual_style":{"palette":{"voyager_blue":"#0B1E40","explorer_gold":"#F5B500"}},
+      "platforms":{
+        "instagram":{
+          "caption_rules":{"hook_max_chars":125,"caption_max_chars":2200},
+          "hashtag_policy":{
+            "required_brand":["#VoyagerShoes"],
+            "theme_pool":["#EveryStepIsAnExploration","#FootballJourney"]
+          }
+        }
+      },
+      "ai_image":{"negative_prompts":["club logos","league badges","faces","endorsements"]},
+      "taboo_terms":["buy now","miracle","guaranteed"]
+    }
 
-    # Light validation
-    ig = result.get("instagram_post", {})
-    if not isinstance(ig, dict):
-        raise ValueError("Missing 'instagram_post' object.")
-    if "caption" not in ig or not isinstance(ig["caption"], str) or not ig["caption"].strip():
-        raise ValueError("Missing or empty 'caption' in instagram_post.")
-    if "image_prompt" not in ig or not isinstance(ig["image_prompt"], str) or not ig["image_prompt"].strip():
-        raise ValueError("Missing or empty 'image_prompt' in instagram_post.")
+def basic_setup(inp: dict) -> dict:
+    if "brand_guidelines" not in inp: inp["brand_guidelines"] = load_brand_guidelines()
+    inp.setdefault("target_audience", {"label":"generic","locale":"en-GB"})
+    inp.setdefault("campaign_draft_paragraph", "Promote Voyager Shoes as the boot for explorers.")
+    inp.setdefault("topic", "football")
+    inp.setdefault("month", "2025-10")
+    return inp
 
-    # Optional: ensure exactly 2 hashtags in the last line (best-effort check)
-    # This keeps things beginner-friendly and not too strict.
-    # You can remove this block if it’s too opinionated.
-    caption_lines = [ln.strip() for ln in ig["caption"].splitlines() if ln.strip()]
-    if caption_lines:
-        last_line = caption_lines[-1]
-        hashtags = [tok for tok in last_line.split() if tok.startswith("#")]
-        if len(hashtags) != 2:
-            # Not fatal—just a gentle nudge by appending correct brand + thematic pair.
-            # If your guideline uses different tags, update them in brand_guideline.txt.
-            if "#VoyagerShoes" not in last_line or "#EveryStepIsAnExploration" not in last_line:
-                ig["caption"] = ig["caption"].rstrip() + "\n#VoyagerShoes #EveryStepIsAnExploration"
+# ---------- AGENTS (each ends with _agent) ----------
+def audience_profiler_agent(audience: dict) -> dict:
+    if USE_OLLAMA:
+        schema = '{"key_insight":"string","desired_emotions":["string"],"voice_tone":"string","literacy_level":"string","taboo_list":["string"]}'
+        prompt = f"""{PROMPT_AUDIENCE_PROFILER}
 
-    return result
+Audience:
+{json.dumps(audience)}"""
+        return ask_ollama(OLLAMA_MODEL, prompt, mode="json", schema=schema, temperature=0.2)
+    return {"key_insight":"Football = identity.","desired_emotions":["amped","proud"],"voice_tone":"adventurous, empowering","literacy_level":"general","taboo_list":["hard sell"]}
+
+def campaign_planner_agent(draft: str, profile: dict) -> dict:
+    if USE_OLLAMA:
+        schema = '{"comms_objective":"string","single_minded_proposition":"string","reasons_to_believe":["string"],"CTA":"string","success_signal":"string"}'
+        prompt = f"""{PROMPT_CAMPAIGN_PLANNER}
+
+Draft: {draft}
+Audience voice: {profile.get('voice_tone')}"""
+        return ask_ollama(OLLAMA_MODEL, prompt, mode="json", schema=schema, temperature=0.1)
+    return {"comms_objective":"Drive consideration","single_minded_proposition":"Every step is an exploration.","reasons_to_believe":["exploration framing"],"CTA":"Keep moving.","success_signal":"Saves >= 1.5%"}
+
+def brand_enforcer_agent(plan: dict, brand: dict, taboo_list: list) -> dict:
+    tone = ", ".join(brand.get("tone", [])) or "adventurous, empowering"
+    adj = dict(plan); adj["voice_tone"] = tone
+    if any(t in adj.get("CTA","").lower() for t in ["buy now","sale"]): adj["CTA"] = "Keep moving."
+    return {"adjusted_plan": adj, "violations": [], "alignment_score": 0.95}
+
+# def trend_miner_agent(topic: str, month: str, locale: str) -> dict:
+#     return {"trend_summary":"Derby chatter, stoppage-time drama, pre-match rituals.",
+#             "hot_keywords":["derby day","stoppage time"],
+#             "example_angles":["golden-hour match prep"],
+#             "fact_snippets":[f"{month} {locale}"], "data_confidence":"medium"}
+
+def trend_miner_agent(topic: str, month: str, locale: str) -> dict:
+    try:
+        data = trend_scraper_tool(topic, month, locale)
+        if data.get("hot_keywords"):
+            return data
+    except Exception:
+        pass
+    # fallback if scraping fails or finds nothing useful
+    return {
+        "trend_summary":"Derby chatter, stoppage-time drama, pre-match rituals.",
+        "hot_keywords":["derby day","stoppage time"],
+        "example_angles":["golden-hour match prep"],
+        "fact_snippets":[f"{month} {locale}"],
+        "data_confidence":"low",
+        "source": "local_fallback"
+    }
+
+def caption_generator_agent(adjusted_plan: dict, trends: dict, brand: dict) -> dict:
+    ig = brand["platforms"]["instagram"]["hashtag_policy"]
+    brand_tag, theme_tag = ig["required_brand"][0], ig["theme_pool"][0]
+
+    if USE_OLLAMA:
+        schema = '{"captions":[{"id":"string","hook":"string","body":"string","CTA":"string","hashtags":["string","string"],"est_chars":0,"used_trends":true}]}'
+        prompt = f"""{PROMPT_CAPTION_GENERATOR}
+
+Plan:
+{json.dumps(adjusted_plan)}
+
+Trends:
+{json.dumps(trends)}
+
+IG Rules:
+{json.dumps(brand["platforms"]["instagram"])}"""
+        data = ask_ollama(OLLAMA_MODEL, prompt, mode="json", schema=schema, temperature=0.7)
+        caps = data.get("captions", []) if isinstance(data, dict) else []
+    else:
+        caps = []
+
+    # ultra-simple normalization + tiny fallback
+    if not caps:
+        base = {"CTA": adjusted_plan.get("CTA","Keep moving."), "hashtags":[brand_tag, theme_tag], "used_trends": True}
+        caps = [
+            {"id":"cap_1","hook":"Every pitch is a new world.","body":"Boots on. Head clear. Chase the horizon—90+ and beyond.",**base},
+            {"id":"cap_2","hook":"Find your next horizon.","body":"From kickoff to stoppage time—keep exploring.",**base}
+        ]
+
+    for i, c in enumerate(caps, 1):
+        c.setdefault("id", f"cap_{i}")
+        c["hook"] = str(c.get("hook",""))
+        c["body"] = str(c.get("body",""))
+        c["CTA"]  = str(c.get("CTA","Keep moving."))
+        hs = c.get("hashtags")
+        if not isinstance(hs, list) or len(hs) != 2:
+            c["hashtags"] = [brand_tag, theme_tag]
+        txt = f"{c['hook']}\n{c['body']}\n\n{c['CTA']}\n{' '.join(c['hashtags'])}"
+        c["est_chars"] = len(txt)
+
+    return {"captions": caps}
 
 
-# ========== Quick demo (runs if you execute `python main.py`) =========
+def image_prompt_engineer_agent(adjusted_plan: dict, chosen_caption: dict, brand: dict, ratio="4:5") -> dict:
+    if USE_OLLAMA:
+        schema = '{"image_prompt":"string","negative_prompts":["string"],"alt_text":"string","metadata":{"ratio":"string"}}'
+        payload = {"adjusted_plan": adjusted_plan, "caption": chosen_caption, "palette": brand.get("visual_style",{}).get("palette",{}),
+                   "negatives": brand.get("ai_image",{}).get("negative_prompts",[]), "ratio": ratio}
+        prompt = f"""{PROMPT_IMAGE_PROMPT_ENGINEER}
 
+Inputs:
+{json.dumps(payload)}"""
+        return ask_ollama(OLLAMA_MODEL, prompt, mode="json", schema=schema, temperature=0.6)
+    neg = brand.get("ai_image", {}).get("negative_prompts", [])
+    return {"image_prompt":"Cinematic scene, Voyager blue & gold, low-angle boots, golden hour, motion blur.",
+            "negative_prompts":neg, "alt_text":"Low-angle boots sprinting at golden hour.", "metadata":{"ratio":ratio}}
+
+def qa_and_selector_agent(captions: list, image_json: dict, brand: dict, plan: dict) -> dict:
+    ig = brand["platforms"]["instagram"]
+    req = ig["hashtag_policy"]["required_brand"][0]
+    pool = ig["hashtag_policy"]["theme_pool"]
+    hook_max = ig["caption_rules"]["hook_max_chars"]
+    cap_max = ig["caption_rules"]["caption_max_chars"]
+
+    passing = []
+    for c in captions:
+        hook = str(c.get("hook","")).strip()
+        body = str(c.get("body","")).strip()
+        CTA  = str(c.get("CTA","Keep moving.")).strip()
+        hs   = c.get("hashtags", [])
+        if not hook or not body: continue
+        if len(hook) > hook_max: continue
+        if len(" ".join([hook, body, CTA, " ".join(hs)])) > cap_max: continue
+        if not isinstance(hs, list) or len(hs) != 2: continue
+        if req not in hs: continue
+        if not any(h in pool for h in hs if h != req): continue
+        text = (hook + " " + body + " " + CTA).lower()
+        if any(t in text for t in brand.get("taboo_terms", [])): continue
+        passing.append(c)
+
+    if not passing:
+        return {"status":"needs_revision","reason":"no passing caption"}
+
+    best = passing[0]
+    post = f"{best['hook']}\n{best['body']}\n\n{best['CTA']}\n{' '.join(best['hashtags'])}"
+    return {
+        "instagram_post_text": post,
+        "image_generation_prompt": image_json.get("image_prompt",""),
+        "alt_text": image_json.get("alt_text",""),
+        "metadata": {
+            "objective": plan.get("comms_objective",""),
+            "primary_kpi": plan.get("success_signal",""),
+            "constraints_applied": True
+        }
+    }
+
+# ---------- FLOW ----------
+def run_pipeline(user_input: dict) -> dict:
+    inp = basic_setup(user_input)
+    brand = inp["brand_guidelines"]; audience = inp["target_audience"]
+
+    prof     = time_step("audience_profiler_agent", audience_profiler_agent, audience)
+    taboos   = prof.get("taboo_list", inp["brand_guidelines"].get("taboo_terms", []))
+    plan     = time_step("campaign_planner_agent",  campaign_planner_agent, inp["campaign_draft_paragraph"], prof)
+    enforced = time_step("brand_enforcer_agent",    brand_enforcer_agent, plan, brand, taboos)
+    trends = time_step("trend_miner_agent", trend_miner_agent, inp["topic"], inp["month"], audience.get("locale","en-GB"))
+    print("Trend source:", trends.get("source", "unknown"))
+    
+    caps     = time_step("caption_generator_agent", caption_generator_agent, enforced["adjusted_plan"], trends, brand)
+    img      = time_step("image_prompt_engineer_agent", image_prompt_engineer_agent, enforced["adjusted_plan"], caps["captions"][0], brand)
+    final    = time_step("qa_and_selector_agent",   qa_and_selector_agent, caps["captions"], img, brand, plan)
+    
+    final.setdefault("metadata", {})["trend_source"] = trends.get("source", "unknown")
+
+    return final
+
+# ---------- DEMO ----------
 if __name__ == "__main__":
-    # 1) Generate a draft brief
-    draft = campaign_planner_agent(
-        goal="Grow email signups ahead of the derby weekend.",
-        audience="Urban 18–34 sneaker fans who watch Premier League highlights on mobile.",
-        football_moment="Derby weekend buildup (Fri–Sun) and matchday rituals.",
-        draft_ideas=[
-            "UGC challenge: 'matchday steps' to the stadium",
-            "Limited-time colorway inspired by home/away kits",
-            "Fan podcast mini-segment about pre-match routines",
-        ],
-    )
-    print("\n=== Draft Campaign Brief ===")
-    print(json.dumps(draft, indent=2, ensure_ascii=False))
+    sample = {
+      "target_audience": {"label":"UK football fans 18–24","locale":"en-GB"},
+      "campaign_draft_paragraph": "Promote Voyager Shoes as the boot for explorers. Focus on the journey.",
+      "topic":"football","month":"2025-10",
+      "brand_guidelines": load_brand_guidelines()
+    }
+    result = run_pipeline(sample)
+    print(json.dumps(result, indent=2))
+    print(f"Token usage — input: {TOKENS['input']}, output: {TOKENS['output']}")
 
-    # 2) Polish the draft using ONLY ./brand_guideline.txt
-    polished = brand_consistency_agent(
-        draft_campaign_brief=draft,
-        guideline_path=BRAND_GUIDE_PATH_DEFAULT,  # ./brand_guideline.txt (same folder)
-    )
-    print("\n=== Polished Campaign Brief (On-Brand) ===")
-    print(json.dumps(polished, indent=2, ensure_ascii=False))
-
-    # 3) Create an Instagram-ready post from the polished brief + guideline
-    instagram = instagram_creator_agent(
-        polished_campaign_brief=polished,
-        guideline_path=BRAND_GUIDE_PATH_DEFAULT,
-    )
-    print("\n=== Instagram Post (Caption + Image Prompt) ===")
-    print(json.dumps(instagram, indent=2, ensure_ascii=False))
