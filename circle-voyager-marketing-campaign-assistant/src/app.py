@@ -1,161 +1,125 @@
-#!/usr/bin/env python3
-# Streamlit front end for Voyager Shoes agents
-
-import json
+# app.py
 import os
+import json
 import time
+from io import StringIO
+from contextlib import redirect_stdout
 import streamlit as st
 
-# Import your agents from main.py (must be in the same folder)
-from main import (
-    campaign_planner_agent,
-    brand_consistency_agent,
-    instagram_creator_agent,
-    BRAND_GUIDE_PATH_DEFAULT,  # path to ./brand_guideline.txt (resolved in main.py)
-)
+import main as engine  # run_pipeline, load_brand_guidelines, TOKENS
 
-st.set_page_config(page_title="Voyager Campaign Assistant", page_icon="🟦", layout="wide")
+st.set_page_config(page_title="Marketing Campaign Assistant", layout="wide")
 
-# --- Sidebar: Environment / status -------------------------------------------------
-st.sidebar.title("⚙️ Settings")
-MODEL = os.getenv("OLLAMA_MODEL", "llama3.1")
-HOST  = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-st.sidebar.write(f"**Model:** `{MODEL}`")
-st.sidebar.write(f"**Ollama host:** `{HOST}`")
+st.title("📣 Marketing Campaign Assistant")
+st.caption("Instagram caption + cinematic image prompt — powered by your local Ollama model")
 
-# Brand guideline preview
-with st.sidebar.expander("📘 brand_guideline.txt (preview)"):
-    try:
-        with open(BRAND_GUIDE_PATH_DEFAULT, "r", encoding="utf-8") as f:
-            st.code(f.read(), language="markdown")
-    except FileNotFoundError:
-        st.warning("brand_guideline.txt not found next to main.py")
+# ---- Sidebar: runtime knobs ----
+with st.sidebar:
+    st.header("Runtime")
+    model = st.text_input("Ollama model", value=getattr(engine, "OLLAMA_MODEL", "phi3:mini"))
+    host = st.text_input("Ollama host", value=getattr(engine, "OLLAMA_HOST", "http://127.0.0.1:11434"))
+    if st.button("Apply model/host"):
+        engine.OLLAMA_MODEL = model
+        engine.OLLAMA_HOST = host
+        engine.CHAT_URL = f"{host}/api/chat"
+        engine.GEN_URL  = f"{host}/api/generate"
+        st.success(f"Set model={model} host={host}")
 
-st.sidebar.info("Make sure Ollama is running and the model is pulled (e.g., `ollama pull llama3.1`).")
+# ---- Brand loader (no upload; read from file in folder) ----
+def _load_brand_from_disk():
+    # Prefer brand_guideline.json if that's what you have; else default loader
+    if os.path.exists("brand_guideline.json"):
+        return engine.load_brand_guidelines("brand_guideline.json")
+    return engine.load_brand_guidelines()  # default looks for brand_guidelines.json
 
-# --- Main header -------------------------------------------------------------------
-st.title("🟦 Voyager Shoes — Campaign Assistant")
-st.caption("Campaign Planner → Brand Consistency → Instagram Creator")
+default_brand = _load_brand_from_disk()
 
-# --- Inputs ------------------------------------------------------------------------
-with st.form("inputs"):
-    st.subheader("Inputs")
-    goal = st.text_input("Goal", value="Grow email signups ahead of the derby weekend.")
-    audience = st.text_input("Audience", value="Urban 18–34 sneaker fans who watch Premier League highlights on mobile.")
-    football_moment = st.text_input("Football moment", value="Derby weekend buildup (Fri–Sun) and matchday rituals.")
-    draft_ideas_text = st.text_area(
-        "Draft ideas (one per line)",
-        value="UGC challenge: 'matchday steps' to the stadium\n"
-              "Limited-time colorway inspired by home/away kits\n"
-              "Fan podcast mini-segment about pre-match routines",
-        height=120,
-    )
-    submitted = st.form_submit_button("▶️ Run Agents")
+# ---- Defaults ----
+default_audience_label = "UK football fans 18–24"
+default_locale = "en-GB"
+default_paragraph = "Promote Voyager Shoes as the boot for explorers. Focus on the journey."
+default_topic = "football"
+default_month = "2025-10"
 
-# Helper to split draft ideas safely
-def _to_list(multiline: str):
-    lines = [ln.strip() for ln in (multiline or "").splitlines()]
-    return [ln for ln in lines if ln]
-
-# --- Run the pipeline --------------------------------------------------------------
-if submitted:
-    draft_ideas = _to_list(draft_ideas_text)
-    progress = st.progress(0)
-    timings = []
-
-    # ---------- Agent 1: Campaign Planner ----------
-    st.subheader("1) Campaign Planner Agent")
-    st.write("**What it does:**")
-    st.markdown(
-        "- Creates concise **messaging** aligned to your inputs\n"
-        "- Generates **exactly 3 creative hooks** (emotional, aspirational, fun/sporty)\n"
-        "- Defines up to **3 personas** (with motivations)\n"
-    )
-
-    t0 = time.perf_counter()
-    with st.spinner("Running Campaign Planner Agent…"):
-        try:
-            draft = campaign_planner_agent(goal, audience, football_moment, draft_ideas)
-            dur = time.perf_counter() - t0
-            timings.append({"Agent": "Campaign Planner", "Duration (s)": round(dur, 2)})
-            st.success(f"Done in {dur:.2f} seconds")
-            with st.expander("🔎 Draft Campaign Brief (JSON)"):
-                st.json(draft)
-        except Exception as e:
-            st.error(f"Campaign Planner Agent failed: {e}")
-            st.stop()
-    progress.progress(33)
-
-    # ---------- Agent 2: Brand Consistency ----------
-    st.subheader("2) Brand Consistency Agent")
-    st.write("**What it does:**")
-    st.markdown(
-        "- Aligns draft with **brand guideline** (tone, palette, typography, visual mood)\n"
-        "- Strengthens **messaging** and **hooks** to match brand voice\n"
-        "- Produces **visuals** (fonts, colors, imagery) and a unified **tagline**\n"
-    )
-
-    t1 = time.perf_counter()
-    with st.spinner("Running Brand Consistency Agent…"):
-        try:
-            polished = brand_consistency_agent(draft_campaign_brief=draft, guideline_path=BRAND_GUIDE_PATH_DEFAULT)
-            dur = time.perf_counter() - t1
-            timings.append({"Agent": "Brand Consistency", "Duration (s)": round(dur, 2)})
-            st.success(f"Done in {dur:.2f} seconds")
-            with st.expander("🔎 Polished Campaign Brief (JSON)"):
-                st.json(polished)
-        except Exception as e:
-            st.error(f"Brand Consistency Agent failed: {e}")
-            st.stop()
-    progress.progress(66)
-
-    # ---------- Agent 3: Instagram Creator ----------
-    st.subheader("3) Instagram Creator Agent")
-    st.write("**What it does:**")
-    st.markdown(
-        "- Crafts an **Instagram-ready caption**:\n"
-        "  - Hero line (3–6 words)\n"
-        "  - 1–2 short subtext lines + soft CTA\n"
-        "  - **Exactly 2 hashtags** (1 brand + 1 thematic)\n"
-        "- Generates a single **image prompt** that matches the caption and brand visuals\n"
-    )
-
-    t2 = time.perf_counter()
-    with st.spinner("Running Instagram Creator Agent…"):
-        try:
-            instagram = instagram_creator_agent(polished_campaign_brief=polished, guideline_path=BRAND_GUIDE_PATH_DEFAULT)
-            dur = time.perf_counter() - t2
-            timings.append({"Agent": "Instagram Creator", "Duration (s)": round(dur, 2)})
-            st.success(f"Done in {dur:.2f} seconds")
-            with st.expander("🔎 Instagram Output (JSON)"):
-                st.json(instagram)
-        except Exception as e:
-            st.error(f"Instagram Creator Agent failed: {e}")
-            st.stop()
-    progress.progress(100)
-
-    # ---------- Final Output + Timings ----------
-    st.markdown("---")
-    st.header("✅ Final Instagram Post")
-    caption = instagram.get("instagram_post", {}).get("caption", "").strip()
-    image_prompt = instagram.get("instagram_post", {}).get("image_prompt", "").strip()
-
+# ---- Input form (no JSON, no file upload) ----
+with st.form("campaign_form"):
+    st.subheader("Input")
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader("Caption")
-        st.text_area("Instagram Caption", caption, height=220)
+        audience_label = st.text_input("Target Audience Label", value=default_audience_label)
+        locale = st.text_input("Locale (e.g., en-GB)", value=default_locale)
+        topic = st.text_input("Topic", value=default_topic)
     with col2:
-        st.subheader("Image Prompt")
-        st.text_area("Image Generation Prompt", image_prompt, height=220)
+        month = st.text_input("Month (YYYY-MM)", value=default_month)
+        st.text_input("Brand file on disk", value=("brand_guideline.json" if os.path.exists("brand_guideline.json") else "brand_guidelines.json"), disabled=True)
 
-    st.download_button(
-        label="💾 Download instagram_post.json",
-        data=json.dumps(instagram, indent=2, ensure_ascii=False),
-        file_name="instagram_post.json",
-        mime="application/json",
-    )
+    draft = st.text_area("Campaign Draft Paragraph", value=default_paragraph, height=120)
 
-    st.subheader("⏱️ Agent Timings")
-    st.table(timings)
+    run_btn = st.form_submit_button("Generate")
+
+# ---- Run ----
+if run_btn:
+    sample = {
+        "target_audience": {"label": audience_label, "locale": locale},
+        "campaign_draft_paragraph": draft,
+        "topic": topic,
+        "month": month,
+        "brand_guidelines": default_brand,
+    }
+
+    engine.TOKENS["input"] = 0
+    engine.TOKENS["output"] = 0
+
+    buf = StringIO()
+    start = time.perf_counter()
+    with redirect_stdout(buf):
+        try:
+            result = engine.run_pipeline(sample)
+        except Exception as e:
+            print(f"[ERROR] {e}")
+            result = {"status": "error", "message": str(e)}
+    elapsed = time.perf_counter() - start
+    logs = buf.getvalue()
+
+    # ---- Output (form-style, full metadata) ----
+    st.subheader("Output")
+
+    if result.get("status") == "error":
+        st.error(result.get("message", "Unknown error"))
+    else:
+        c1, c2 = st.columns(2)
+
+        with c1:
+            st.markdown("**Instagram Caption (copy-ready)**")
+            st.text_area("", value=result.get("instagram_post_text", ""), height=220, label_visibility="collapsed")
+
+            st.markdown("**Alt Text**")
+            st.text_area("", value=result.get("alt_text", ""), height=80, label_visibility="collapsed")
+
+        with c2:
+            st.markdown("**Image Generation Prompt**")
+            st.text_area("", value=result.get("image_generation_prompt", ""), height=220, label_visibility="collapsed")
+
+            st.markdown("**Metadata**")
+            md = result.get("metadata", {}) or {}
+            m1, m2, m3 = st.columns([2,2,1])
+            m1.text_area("Objective", md.get("objective", ""), height=80, disabled=True)
+            m2.text_area("Primary KPI", md.get("primary_kpi", ""), height=80, disabled=True)
+            m3.text_input("Trend Source", md.get("trend_source", "n/a"), disabled=True)
+            st.checkbox("Constraints applied", value=bool(md.get("constraints_applied", False)), disabled=True)
+
+        # Logs & totals
+        st.subheader("Agent timings & token usage")
+        st.code(logs or "(no logs)")
+
+        tot_in = engine.TOKENS.get("input", 0)
+        tot_out = engine.TOKENS.get("output", 0)
+        t1, t2, t3 = st.columns(3)
+        t1.metric("Total input tokens", tot_in)
+        t2.metric("Total output tokens", tot_out)
+        t3.metric("Total elapsed (s)", f"{elapsed:.2f}")
+
 else:
-    st.info("Fill the inputs above and click **Run Agents** to generate your campaign!")
+    st.info("Fill the form and click **Generate** to run the pipeline.")
+
+st.caption("Runs your local Ollama model for creative steps; brand/QA enforced in Python.")
