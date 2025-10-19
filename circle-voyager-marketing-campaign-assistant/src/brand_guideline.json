@@ -1,0 +1,89 @@
+{
+  "brand_name": "Voyager Shoes",
+  "essence": {
+    "tagline": "Every step is an exploration.",
+    "core_belief": "Football is a journey of growth, discovery, and passion.",
+    "symbolism": "Each player is a voyager."
+  },
+  "locale": "en-GB",
+  "tone": ["adventurous", "empowering", "authentic", "confident", "cinematic", "emotional"],
+  "voice_rules": {
+    "do": [
+      "Use short, bold statements",
+      "Keep copy cinematic and human",
+      "Lead with exploration over product pitch"
+    ],
+    "dont": [
+      "No corporate/sales tone",
+      "No swearing",
+      "No hard-sell CTAs"
+    ]
+  },
+  "typography": {
+    "headline": ["Montserrat", "Bebas Neue", "Oswald"],
+    "body": ["Open Sans", "Lato", "Roboto"],
+    "accent": ["Raleway Italic", "Playfair Italic"]
+  },
+  "visual_style": {
+    "palette": {
+      "voyager_blue": "#0B1E40",
+      "explorer_gold": "#F5B500",
+      "freedom_white": "#FFFFFF",
+      "journey_grey": "#7C8BA1",
+      "pitch_green_optional": "#3B7D3C"
+    },
+    "mood": {
+      "lighting": ["golden hour", "sunrise", "sunset"],
+      "composition": ["dynamic angles", "movement blur", "grounded realism"],
+      "textures": ["turf", "dust", "sweat", "natural lighting"],
+      "focus_points": ["boots in motion", "running silhouettes", "horizon lines", "low-angle field views"]
+    }
+  },
+  "platforms": {
+    "instagram": {
+      "tone": ["inspirational", "cinematic", "emotional"],
+      "caption_rules": {
+        "hook_max_chars": 125,
+        "caption_max_chars": 2200,
+        "soft_cta_required": true,
+        "soft_cta_examples": ["Keep moving.", "Find your next horizon.", "Explore the pitch."]
+      },
+      "hashtag_policy": {
+        "max": 2,
+        "required_brand": ["#VoyagerShoes"],
+        "theme_pool": ["#EveryStepIsAnExploration", "#FootballJourney", "#PlayBeyondLimits", "#BuiltForExplorers", "#NextStep", "#OwnThePitch", "#VoyagerFootball", "#GameChanger"],
+        "exact_count": 2
+      },
+      "emoji_policy": { "allowed": true, "max_per_post": 6, "max_per_sentence": 1 }
+    }
+  },
+  "claims_policy": {
+    "allowed": ["emotional empowerment", "journey/exploration framing"],
+    "prohibited": ["medical claims", "performance increase percentages", "guaranteed outcomes"]
+  },
+  "ip_policy": {
+    "forbidden": ["club logos/crests", "league marks", "recognizable player likenesses", "third-party brand endorsements"],
+    "phrasing_to_avoid": ["official partner of", "endorsed by"]
+  },
+  "hashtags_core": ["#VoyagerShoes", "#EveryStepIsAnExploration"],
+  "post_composition": {
+    "hero_line_words_range": [3, 6],
+    "subtext_lines_range": [1, 2],
+    "soft_cta_style": "motivational",
+    "image_guidance": "Emotion-driven, showing motion and exploration."
+  },
+  "ai_image": {
+    "keywords": ["football", "journey", "exploration", "field", "running", "sunrise", "dust", "cinematic", "motion", "discovery", "bold", "power", "freedom", "adventure", "growth", "determination", "resilience", "voyager", "player silhouette", "boots close-up", "horizon", "strength"],
+    "ratio": ["1:1", "4:5"],
+    "style_prompt_template": "Minimalist, cinematic football action in Voyager palette (deep blue and gold), dynamic angle, motion blur, golden-hour lighting, space for hero quote bottom-left.",
+    "negative_prompts": ["club logos", "league badges", "recognizable player faces", "brand endorsements", "medical scenes"]
+  },
+  "taboo_terms": ["buy now", "miracle", "guaranteed", "best-in-class", "official partner"],
+  "legal_disclaimers": [],
+  "qa_requirements": {
+    "require_brand_tag": true,
+    "require_theme_tag": true,
+    "tone_must_include": ["adventurous", "empowering"],
+    "ban_sales_language": true
+  }
+}
